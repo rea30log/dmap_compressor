@@ -1,332 +1,222 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Map Compressor (Enhanced)</title>
+<title>Dmap Compressor</title>
 <style>
-body{
-  background:#111;
-  color:#eee;
-  font-family:Arial,sans-serif;
-  padding:20px;
-}
-h2{ margin:0 0 12px; }
-textarea{
-  width:100%;
-  height:260px;
-  background:#222;
-  color:#fff;
-  border:1px solid #555;
-  padding:10px;
-  box-sizing:border-box;
-  font-family:monospace;
-  resize:vertical;
-}
-button,select{
-  padding:10px;
-  margin:5px 5px 5px 0;
-  font-size:15px;
-}
-button{
-  background:#000;
-  color:#fff;
-  border:1px solid #555;
-  cursor:pointer;
-}
-button:hover{
-  background:#1a1a1a;
-}
-button.active{
-  outline:2px solid #8f8;
-}
-select{
-  background:#000;
-  color:#fff;
-  border:1px solid #555;
-}
-#info{
-  margin-top:10px;
-  white-space:pre-line;
-  color:#fff;
-  text-shadow:0 0 2px #000, 0 0 4px #000;
-  max-height:220px;
-  overflow:auto;
-  padding:8px 10px;
-  border:1px solid #333;
-  background:#161616;
-  border-radius:8px;
-}
-.row{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  margin-bottom:10px;
-  flex-wrap:wrap;
-}
-.label{
-  color:#ddd;
-  min-width:72px;
-}
-.modeBtn{
-  min-width:92px;
-}
+:root{--bg:#000;--fg:#eee;--bd:#555;--box:#111;--inp:#222}
+body.light{--bg:#f1f1f1;--fg:#111;--bd:#999;--box:#fff;--inp:#fff}
+body{margin:0;padding:18px;font:14px Arial,sans-serif;background:var(--bg);color:var(--fg);transition:.2s}
+*{box-sizing:border-box}
+h2{margin:0 0 12px;font-size:22px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+label{white-space:nowrap}
+select,input,button,textarea{background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:10px;font:inherit}
+select,input[type=file],button{width:auto}
+button{cursor:pointer;min-width:0}
+textarea{width:100%;height:170px;resize:vertical}
+input[type=file]{width:100%}
+.stats,#info,.sel{white-space:pre-line;background:var(--box);border:1px solid var(--bd);border-radius:8px;padding:10px}
+.sel{margin:8px 0 10px}
+.small{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:6px 0 0}
+.badge{display:inline-block;padding:2px 8px;border:1px solid var(--bd);border-radius:999px;opacity:.92}
+button.inline{width:auto}
 </style>
-</head>
-<body>
 
-<h2>Dmap Compressor</h2>
+<h2 id="title">Dmap Compressor v2.0.0</h2>
 
 <div class="row">
-  <span class="label">Language:</span>
-  <select id="lang" onchange="setLang()">
-    <option value="jp">日本語</option>
+  <label id="lblLang">Language</label>
+  <select id="lang">
+    <option value="jp">Japanese</option>
     <option value="en">English</option>
   </select>
+
+  <select id="mode"></select>
+  <select id="style"></select>
+  <select id="theme"></select>
 </div>
+
+<input id="file" type="file" accept=".txt,text/plain" multiple>
+
+<div class="sel" id="sel">ファイル未選択</div>
+
+<textarea id="input" placeholder="マップデータを貼り付け"></textarea>
 
 <div class="row">
-  <span id="encodingLabel" class="label">Encoding:</span>
-  <button id="unicodeModeBtn" class="modeBtn" onclick="setEncoding('unicode')">Unicode</button>
-  <button id="utfModeBtn" class="modeBtn" onclick="setEncoding('utf')">UTF</button>
+  <button class="inline" id="run">圧縮</button>
+  <button class="inline" id="copyIn">入力をコピー</button>
 </div>
 
-<textarea id="map" placeholder="マップデータをここに貼り付け"></textarea>
+<div class="stats" id="stats">Input: 0
+Output: 0
+圧縮率: -</div>
 
-<br>
+<textarea id="output" readonly placeholder="圧縮後データが表示されます"></textarea>
 
-<button id="compressBtn" onclick="compressBest()">圧縮</button>
-<button id="decompressBtn" onclick="decompressMap()">解凍</button>
-<button id="copyBtn" onclick="copyMap()">コピー</button>
+<div class="row">
+  <button class="inline" id="copyOut">出力をコピー</button>
+  <button class="inline" id="download">txtをダウンロード</button>
+</div>
 
-<div id="info"></div>
+<div id="info" class="stats"></div>
 
 <script>
-const HEAD_UNI = "M:c:";
-const HEAD_UTF = "M:u:";
+const U="M:c:",V="M:u:",U14=0x4E00,enc=new TextEncoder(),dec=new TextDecoder(),$=id=>document.getElementById(id);
+const S={lang:"jp",mode:"c",style:"unicode",theme:"dark",files:[],multi:[],singleText:""};
+const T={
+  jp:{
+    modeLabel:"圧縮/展開", styleLabel:"Unicode/UTF", themeLabel:"テーマ",
+    compress:"圧縮", decompress:"展開",
+    copyIn:"入力をコピー", copyOut:"出力をコピー", download:"txtをダウンロード",
+    inputPH:"マップデータを貼り付け", outputPH:"圧縮後データが表示されます",
+    noFile:"ファイル未選択", multi:"複数選択中", selected:"選択中のファイル",
+    input:"入力", output:"出力", rate:"圧縮率",
+    rate2:"展開率",
+    noInput:"マップデータがありません", notComp:"圧縮データではありません",
+    already:"すでに圧縮済みです", noAPI:"このブラウザはCompressionStream API / DecompressionStream APIに対応していません",
+    doneC:"圧縮完了", doneD:"展開完了", fail:"失敗",
+    copiedIn:"入力をクリップボードにコピーしました", copiedOut:"出力をクリップボードにコピーしました",
+    fileOne:"件", files:"ファイル"
+  },
+  en:{
+    modeLabel:"Compress/Decompress", styleLabel:"Unicode/UTF", themeLabel:"Theme",
+    compress:"Compress", decompress:"Decompress",
+    copyIn:"Copy Input", copyOut:"Copy Output", download:"Download TXT",
+    inputPH:"Paste map data here", outputPH:"Compressed data will appear here",
+    noFile:"No file selected", multi:"Multiple selected", selected:"Selected files",
+    input:"Input", output:"Output", rate:"Compression rate",
+    rate2:"Expansion rate",
+    noInput:"No map data", notComp:"Not compressed data",
+    already:"Already compressed", noAPI:"This browser does not support CompressionStream / DecompressionStream",
+    doneC:"Compression complete", doneD:"Decompression complete", fail:"Failed",
+    copiedIn:"Input copied to clipboard", copiedOut:"Output copied to clipboard",
+    fileOne:"file", files:"files"
+  }
+};
 
-const B91 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\"";
-const B91MAP = new Map([...B91].map((c, i) => [c, i]));
-const U14_0 = 0x4E00; 
-
-let t;
-let selectedEncoding = "unicode";
-
-function addLog(text){
-  const infoEl = document.getElementById("info");
-  const current = infoEl.innerText.trim();
-  infoEl.innerText = current ? text + "\n\n" + current : text;
-}
-
+function tr(){return T[S.lang]}
 function setLang(){
-  const l = document.getElementById("lang").value;
-  if(l === "en"){
-    t = {
-      compressed: "Compressed (Deflate)",
-      done: "Decompressed",
-      fail: "Failed",
-      already: "Already compressed",
-      notCompressed: "Not compressed data",
-      empty: "No map data",
-      compress: "Compress",
-      decompress: "Decompress",
-      copy: "Copy",
-      placeholder: "Paste map data here",
-      encoding: "Encoding:",
-      copied: "Copied to clipboard",
-      noApi: "CompressionStream API is not supported in this browser.",
-      compRate: "Compression Rate"
-    };
-  }else{
-    t = {
-      compressed: "圧縮完了 (Deflate)",
-      done: "解凍完了",
-      fail: "失敗",
-      already: "すでに圧縮済みです",
-      notCompressed: "圧縮データではありません",
-      empty: "マップデータがありません",
-      compress: "圧縮",
-      decompress: "解凍",
-      copy: "コピー",
-      placeholder: "マップデータをここに貼り付け",
-      encoding: "Encoding:",
-      copied: "クリップボードにコピーしました",
-      noApi: "ブラウザがCompressionStream APIに対応していません。",
-      compRate: "圧縮率"
-    };
+  const t=tr();
+  $("title").textContent="Dmap Compressor";
+  $("lblLang").textContent="Language";
+  $("mode").innerHTML=`<option value="c">${t.compress}</option><option value="d">${t.decompress}</option>`;
+  $("style").innerHTML=`<option value="unicode">Unicode</option><option value="utf">UTF</option>`;
+  $("theme").innerHTML=`<option value="dark">${S.lang==="jp"?"ダーク":"Dark"}</option><option value="light">${S.lang==="jp"?"ライト":"Light"}</option>`;
+  $("run").textContent=S.mode==="c"?t.compress:t.decompress;
+  $("copyIn").textContent=t.copyIn;
+  $("copyOut").textContent=t.copyOut;
+  $("download").textContent=t.download;
+  $("input").placeholder=t.inputPH;
+  $("output").placeholder=S.mode==="c"?t.outputPH:(S.lang==="jp"?"展開後データが表示されます":"Decompressed data will appear here");
+  updateSel();
+  updateStats();
+}
+function updateSel(){
+  const t=tr();
+  if(!S.files.length){$("sel").textContent=t.noFile; return;}
+  if(S.files.length===1){$("sel").textContent=S.files[0].name; return;}
+  $("sel").textContent=`${t.multi} (${S.files.length})\n`+S.files.map(f=>f.name).join("\n");
+}
+function updateStats(){
+  const t=tr();
+  if(S.multi.length){
+    $("stats").textContent=S.multi.map((x,i)=>`${t.rate}[${i+1}]: ${x}`).join("\n");
+    return;
   }
-
-  document.getElementById("compressBtn").innerText = t.compress;
-  document.getElementById("decompressBtn").innerText = t.decompress;
-  document.getElementById("copyBtn").innerText = t.copy;
-  document.getElementById("encodingLabel").innerText = t.encoding;
-  document.getElementById("map").placeholder = t.placeholder;
-  updateModeUI();
+  const a=$("input").value.trim().length,b=$("output").value.trim().length;
+  const r=a?((S.mode==="c"?(1-b/a):(b/a))*100).toFixed(2)+"%":"-";
+  $("stats").textContent=`${t.input}: ${a}\n${t.output}: ${b}\n${t.rate}: ${r}`;
 }
-
-function setEncoding(mode){
-  selectedEncoding = mode;
-  updateModeUI();
+function log(msg){$("info").textContent=msg+"\n\n"+$("info").textContent}
+function rate(a,b,m){return a?((m==="c"?(1-b/a):(b/a))*100).toFixed(2)+"%":"-"}
+function b64e(u){let s="",i=0;for(;i<u.length;i+=0x8000)s+=String.fromCharCode(...u.subarray(i,i+0x8000));return btoa(s)}
+function b64d(s){let b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u}
+function u14e(u){let o="",b=0,n=0;for(const x of u){b|=x<<n;n+=8;while(n>=14){o+=String.fromCharCode(U14+(b&16383));b>>=14;n-=14}}if(n)o+=String.fromCharCode(U14+b);return o}
+function u14d(s){let o=[],b=0,n=0;for(const c of s){if(/\s/.test(c))continue;let x=c.charCodeAt(0)-U14;if(x<0||x>=16384)continue;b|=x<<n;n+=14;while(n>=8){o.push(b&255);b>>=8;n-=8}}return new Uint8Array(o)}
+async function readFile(f){return new Promise((r,j)=>{let fr=new FileReader();fr.onload=()=>r(String(fr.result??""));fr.onerror=()=>j(new Error(tr().fail));fr.readAsText(f,"UTF-8")})}
+async function compressText(src){
+  const t=tr(); if(!window.CompressionStream) throw new Error(t.noAPI);
+  src=src.trim(); if(!src) throw new Error(t.noInput); if(src.startsWith(U)||src.startsWith(V)) throw new Error(t.already);
+  const ab=await new Response(new Blob([enc.encode(src)]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer();
+  const u=new Uint8Array(ab),p=u.length.toString(36)+":";
+  return S.style==="utf8" ? V+p+b64e(u) : U+p+u14e(u)
 }
-
-function updateModeUI(){
-  document.getElementById("unicodeModeBtn").classList.toggle("active", selectedEncoding === "unicode");
-  document.getElementById("utfModeBtn").classList.toggle("active", selectedEncoding === "utf");
+async function decompressText(src){
+  const t=tr(); if(!window.DecompressionStream) throw new Error(t.noAPI);
+  src=src.trim(); const uni=src.startsWith(U),utf=src.startsWith(V); if(!uni&&!utf) throw new Error(t.notComp);
+  src=src.slice((uni?U:V).length); const i=src.indexOf(":"); if(i<0) throw new Error("Invalid format");
+  const n=parseInt(src.slice(0,i),36),p=src.slice(i+1); let u=uni?u14d(p):b64d(p); if(u.length>n) u=u.subarray(0,n);
+  return dec.decode(await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer())
 }
-setLang();
-
-
-function b91enc(data){
-  let out = ""; let b = 0; let n = 0;
-  for(const x of data){
-    b |= x << n; n += 8;
-    if(n > 13){
-      let v = b & 8191;
-      if(v > 88){ b >>= 13; n -= 13; }
-      else{ v = b & 16383; b >>= 14; n -= 14; }
-      out += B91[v % 91] + B91[(v / 91) | 0];
-    }
-  }
-  if(n){
-    out += B91[b % 91];
-    if(n > 7 || b > 90) out += B91[(b / 91) | 0];
-  }
-  return out;
+function stripExt(n){const i=n.lastIndexOf("."); return i>0?n.slice(0,i):n}
+function dl(name,text){const a=document.createElement("a"),u=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"})); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),800)}
+function refreshUI(){
+  setLang();
+  $("run").textContent=S.mode==="c"?tr().compress:tr().decompress;
+  $("input").placeholder=tr().inputPH;
+  $("output").placeholder=S.mode==="c"?tr().outputPH:(S.lang==="jp"?"展開後データが表示されます":"Decompressed data will appear here");
+  updateSel(); updateStats();
 }
-
-function b91dec(str){
-  const out = []; let v = -1; let b = 0; let n = 0;
-  for(const c of str){
-    if(/\s/.test(c)) continue;
-    const p = B91MAP.get(c);
-    if(p === undefined) throw new Error("Invalid Base91 character");
-    if(v < 0){ v = p; }
-    else{
-      v += p * 91; b |= v << n; n += (v & 8191) > 88 ? 13 : 14;
-      while(n >= 8){ out.push(b & 255); b >>= 8; n -= 8; }
-      v = -1;
-    }
-  }
-  if(v >= 0) out.push((b | (v << n)) & 255);
-  return new Uint8Array(out);
-}
-
-
-function unicode14Enc(bytes){
-  let out = ""; let b = 0; let n = 0;
-  for(const x of bytes){
-    b |= x << n; n += 8;
-    while(n >= 14){
-      out += String.fromCharCode(U14_0 + (b & 16383));
-      b >>= 14; n -= 14;
-    }
-  }
-  if(n > 0) out += String.fromCharCode(U14_0 + b);
-  return out;
-}
-
-function unicode14Dec(str){
-  const out = []; let b = 0; let n = 0;
-  for(const c of str){
-    if(/\s/.test(c)) continue;
-    const code = c.charCodeAt(0) - U14_0;
-    if(code < 0 || code >= 16384) continue;
-    b |= code << n; n += 14;
-    while(n >= 8){ out.push(b & 255); b >>= 8; n -= 8; }
-  }
-  return new Uint8Array(out);
-}
-
-
-async function compressBest(){
-  if (!window.CompressionStream) return alert(t.noApi);
-  const ta = document.getElementById("map");
-  const raw = ta.value.trim();
-  if(!raw){ alert(t.empty); return; }
-  if(raw.startsWith(HEAD_UNI) || raw.startsWith(HEAD_UTF)){ alert(t.already); return; }
-
-  try {
-    const rawBytes = new TextEncoder().encode(raw);
-    const stream = new Blob([rawBytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
-    const buf = await new Response(stream).arrayBuffer();
-    const cBytes = new Uint8Array(buf);
-
-    
-    const lenInfo = cBytes.length.toString(36) + ":";
-
-    let out = "";
-    if(selectedEncoding === "utf"){
-      out = HEAD_UTF + lenInfo + b91enc(cBytes);
-    }else{
-      out = HEAD_UNI + lenInfo + unicode14Enc(cBytes);
-    }
-
-    
-    const compressionRate = ((1 - out.length / raw.length) * 100).toFixed(2);
-    const unitText = (document.getElementById("lang").value === "en") ? " chars" : " 文字";
-
-    ta.value = out;
-    addLog(
-      t.compressed + "\n" +
-      (selectedEncoding === "utf" ? "UTF (Base91)" : "Unicode (14-bit CJK)") + "\n" +
-      raw.length + " → " + out.length + unitText + " (" + t.compRate + ": " + compressionRate + "%)"
-    );
-  }catch(e){
-    alert(t.fail + ": " + e.message);
-  }
-}
-
-
-async function decompressMap(){
-  if (!window.DecompressionStream) return alert(t.noApi);
-  const ta = document.getElementById("map");
-  const raw = ta.value.trim();
-  
-  const isUni = raw.startsWith(HEAD_UNI);
-  const isUtf = raw.startsWith(HEAD_UTF);
-  if(!isUni && !isUtf){ alert(t.notCompressed); return; }
-
+async function run(){
+  const t=tr();
   try{
-    const prefix = isUni ? HEAD_UNI : HEAD_UTF;
-    const rest = raw.slice(prefix.length);
-    
-    
-    const splitIdx = rest.indexOf(":");
-    if(splitIdx < 0) throw new Error("Invalid format");
-    const expectedLen = parseInt(rest.slice(0, splitIdx), 36);
-    const payload = rest.slice(splitIdx + 1);
-
-    let cBytes;
-    if(isUni){
-      cBytes = unicode14Dec(payload);
+    if(S.files.length>1){
+      const outs=[],rs=[];
+      for(const f of S.files){
+        const src=await readFile(f);
+        const out=S.mode==="c"?await compressText(src):await decompressText(src);
+        outs.push({name:f.name,out});
+        rs.push(rate(src.trim().length,out.trim().length,S.mode));
+      }
+      $("output").value=outs.map(v=>`[${v.name}]\n${v.out}`).join("\n\n");
+      S.multi=rs;
+      log((S.mode==="c"?t.doneC:t.doneD)+` (${S.files.length} ${t.files})`);
     }else{
-      cBytes = b91dec(payload);
+      const src=S.files.length===1 ? await readFile(S.files[0]) : $("input").value;
+      const out=S.mode==="c"?await compressText(src):await decompressText(src);
+      $("output").value=out;
+      S.multi=[];
+      log(S.mode==="c"?t.doneC:t.doneD);
     }
-
-    
-    if (cBytes.length > expectedLen) {
-      cBytes = cBytes.subarray(0, expectedLen);
+    updateStats();
+  }catch(e){alert(t.fail+": "+e.message)}
+}
+function downloadCurrent(){
+  if(S.files.length>1){
+    const chunks=$("output").value.split("\n\n");
+    for(let i=0;i<S.files.length;i++){
+      const name=stripExt(S.files[i].name)+(S.mode==="c"?"_compressed":"_decompressed")+".txt";
+      dl(name,chunks[i]||"");
     }
-
-    const stream = new Blob([cBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    const buf = await new Response(stream).arrayBuffer();
-    
-    ta.value = new TextDecoder().decode(buf);
-    addLog(t.done);
-  }catch(e){
-    alert(t.fail + ": " + e.message);
+  }else{
+    const base=S.files.length===1?stripExt(S.files[0].name):"data";
+    dl(base+(S.mode==="c"?"_compressed":"_decompressed")+".txt",$("output").value);
   }
 }
-
-
-async function copyMap(){
-  try {
-    await navigator.clipboard.writeText(document.getElementById("map").value);
-    addLog(t.copied);
-  } catch(e) {
-    alert(t.fail);
+$("lang").onchange=e=>{S.lang=e.target.value; refreshUI()};
+$("mode").onchange=e=>{S.mode=e.target.value; refreshUI()};
+$("style").onchange=e=>{S.style=e.target.value; updateStats()};
+$("theme").onchange=e=>document.body.classList.toggle("light",S.theme=e.target.value==="light");
+$("file").onchange=async function(){
+  S.files=[...this.files];
+  S.multi=[];
+  if(S.files.length===1){
+    $("input").value=await readFile(S.files[0]);
+  }else if(S.files.length>1){
+    $("input").value=S.files.map(f=>f.name).join("\n");
+  }else{
+    $("input").value="";
   }
-}
+  updateSel(); updateStats();
+  this.value="";
+};
+$("input").oninput=()=>{S.files=[]; S.multi=[]; updateSel(); updateStats()};
+$("run").onclick=run;
+$("copyIn").onclick=()=>navigator.clipboard.writeText($("input").value).then(()=>log(tr().copiedIn)).catch(()=>alert(tr().fail));
+$("copyOut").onclick=()=>navigator.clipboard.writeText($("output").value).then(()=>log(tr().copiedOut)).catch(()=>alert(tr().fail));
+$("download").onclick=downloadCurrent;
+S.theme=false;
+refreshUI();
 </script>
-</body>
 </html>
