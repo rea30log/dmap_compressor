@@ -1,32 +1,76 @@
 <!doctype html>
 <html lang="ja">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dmap Compressor</title>
 <style>
-:root{--bg:#000;--fg:#eee;--bd:#555;--box:#111;--inp:#222}
-body.light{--bg:#f1f1f1;--fg:#111;--bd:#999;--box:#fff;--inp:#fff}
-body{margin:0;padding:18px;font:14px Arial,sans-serif;background:var(--bg);color:var(--fg);transition:.2s}
+:root{
+  --bg:#000;
+  --fg:#eee;
+  --bd:#555;
+  --box:#111;
+  --inp:#222;
+}
+body.light{
+  --bg:#f1f1f1;
+  --fg:#111;
+  --bd:#999;
+  --box:#fff;
+  --inp:#fff;
+}
+body{
+  margin:0;
+  padding:18px;
+  font:14px/1.5 Arial,sans-serif;
+  background:var(--bg);
+  color:var(--fg);
+  transition:.2s;
+}
 *{box-sizing:border-box}
 h2{margin:0 0 12px;font-size:22px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+.row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+  margin:0 0 10px;
+}
 label{white-space:nowrap}
-select,input,button,textarea{background:var(--inp);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:10px;font:inherit}
+select,input,button,textarea{
+  background:var(--inp);
+  color:var(--fg);
+  border:1px solid var(--bd);
+  border-radius:8px;
+  padding:10px;
+  font:inherit;
+}
 select,input[type=file],button{width:auto}
 button{cursor:pointer;min-width:0}
-textarea{width:100%;height:170px;resize:vertical}
+textarea{
+  width:100%;
+  height:170px;
+  resize:vertical;
+}
 input[type=file]{width:100%}
-.stats,#info,.sel{white-space:pre-line;background:var(--box);border:1px solid var(--bd);border-radius:8px;padding:10px}
+.stats,#info,.sel{
+  white-space:pre-line;
+  background:var(--box);
+  border:1px solid var(--bd);
+  border-radius:8px;
+  padding:10px;
+}
 .sel{margin:8px 0 10px}
-.small{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:6px 0 0}
-.badge{display:inline-block;padding:2px 8px;border:1px solid var(--bd);border-radius:999px;opacity:.92}
 button.inline{width:auto}
+.muted{opacity:.8}
 </style>
+</head>
+<body>
 
 <h2 id="title">Dmap Compressor v2.0.0</h2>
 
 <div class="row">
-  <label id="lblLang">Language</label>
+  <label id="lblLang" for="lang">Language</label>
   <select id="lang">
     <option value="jp">Japanese</option>
     <option value="en">English</option>
@@ -59,164 +103,402 @@ Output: 0
   <button class="inline" id="download">txtをダウンロード</button>
 </div>
 
-<div id="info" class="stats"></div>
+<div id="info" class="stats muted"></div>
 
 <script>
-const U="M:c:",V="M:u:",U14=0x4E00,enc=new TextEncoder(),dec=new TextDecoder(),$=id=>document.getElementById(id);
-const S={lang:"jp",mode:"c",style:"unicode",theme:"dark",files:[],multi:[],singleText:""};
-const T={
-  jp:{
-    modeLabel:"圧縮/展開", styleLabel:"Unicode/UTF", themeLabel:"テーマ",
-    compress:"圧縮", decompress:"展開",
-    copyIn:"入力をコピー", copyOut:"出力をコピー", download:"txtをダウンロード",
-    inputPH:"マップデータを貼り付け", outputPH:"圧縮後データが表示されます",
-    noFile:"ファイル未選択", multi:"複数選択中", selected:"選択中のファイル",
-    input:"入力", output:"出力", rate:"圧縮率",
-    rate2:"展開率",
-    noInput:"マップデータがありません", notComp:"圧縮データではありません",
-    already:"すでに圧縮済みです", noAPI:"このブラウザはCompressionStream API / DecompressionStream APIに対応していません",
-    doneC:"圧縮完了", doneD:"展開完了", fail:"失敗",
-    copiedIn:"入力をクリップボードにコピーしました", copiedOut:"出力をクリップボードにコピーしました",
-    fileOne:"件", files:"ファイル"
-  },
-  en:{
-    modeLabel:"Compress/Decompress", styleLabel:"Unicode/UTF", themeLabel:"Theme",
-    compress:"Compress", decompress:"Decompress",
-    copyIn:"Copy Input", copyOut:"Copy Output", download:"Download TXT",
-    inputPH:"Paste map data here", outputPH:"Compressed data will appear here",
-    noFile:"No file selected", multi:"Multiple selected", selected:"Selected files",
-    input:"Input", output:"Output", rate:"Compression rate",
-    rate2:"Expansion rate",
-    noInput:"No map data", notComp:"Not compressed data",
-    already:"Already compressed", noAPI:"This browser does not support CompressionStream / DecompressionStream",
-    doneC:"Compression complete", doneD:"Decompression complete", fail:"Failed",
-    copiedIn:"Input copied to clipboard", copiedOut:"Output copied to clipboard",
-    fileOne:"file", files:"files"
-  }
-};
+(() => {
+  const U_PREFIX = "M:c:";
+  const V_PREFIX = "M:u:";
+  const U14_BASE = 0x4E00;
 
-function tr(){return T[S.lang]}
-function setLang(){
-  const t=tr();
-  $("title").textContent="Dmap Compressor v2.0.0";
-  $("lblLang").textContent="Language";
-  $("mode").innerHTML=`<option value="c">${t.compress}</option><option value="d">${t.decompress}</option>`;
-  $("style").innerHTML=`<option value="unicode">Unicode</option><option value="utf">UTF</option>`;
-  $("theme").innerHTML=`<option value="dark">${S.lang==="jp"?"ダーク":"Dark"}</option><option value="light">${S.lang==="jp"?"ライト":"Light"}</option>`;
-  $("run").textContent=S.mode==="c"?t.compress:t.decompress;
-  $("copyIn").textContent=t.copyIn;
-  $("copyOut").textContent=t.copyOut;
-  $("download").textContent=t.download;
-  $("input").placeholder=t.inputPH;
-  $("output").placeholder=S.mode==="c"?t.outputPH:(S.lang==="jp"?"展開後データが表示されます":"Decompressed data will appear here");
-  updateSel();
-  updateStats();
-}
-function updateSel(){
-  const t=tr();
-  if(!S.files.length){$("sel").textContent=t.noFile; return;}
-  if(S.files.length===1){$("sel").textContent=S.files[0].name; return;}
-  $("sel").textContent=`${t.multi} (${S.files.length})\n`+S.files.map(f=>f.name).join("\n");
-}
-function updateStats(){
-  const t=tr();
-  if(S.multi.length){
-    $("stats").textContent=S.multi.map((x,i)=>`${t.rate}[${i+1}]: ${x}`).join("\n");
-    return;
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    lang: "jp",
+    mode: "c",      // c = compress, d = decompress
+    style: "unicode", // unicode | utf
+    theme: "dark",  // dark | light
+    files: [],
+    multiRates: [],
+  };
+
+  const T = {
+    jp: {
+      compress: "圧縮",
+      decompress: "展開",
+      copyIn: "入力をコピー",
+      copyOut: "出力をコピー",
+      download: "txtをダウンロード",
+      inputPH: "マップデータを貼り付け",
+      outputPHCompress: "圧縮後データが表示されます",
+      outputPHDecompress: "展開後データが表示されます",
+      noFile: "ファイル未選択",
+      multi: "複数選択中",
+      input: "入力",
+      output: "出力",
+      rateC: "圧縮率",
+      rateD: "展開率",
+      noInput: "マップデータがありません",
+      notComp: "圧縮データではありません",
+      already: "すでに圧縮済みです",
+      noAPI: "このブラウザは CompressionStream / DecompressionStream に対応していません",
+      doneC: "圧縮完了",
+      doneD: "展開完了",
+      fail: "失敗",
+      copiedIn: "入力をクリップボードにコピーしました",
+      copiedOut: "出力をクリップボードにコピーしました",
+      fileOne: "件",
+      files: "ファイル",
+      themeDark: "ダーク",
+      themeLight: "ライト",
+    },
+    en: {
+      compress: "Compress",
+      decompress: "Decompress",
+      copyIn: "Copy Input",
+      copyOut: "Copy Output",
+      download: "Download TXT",
+      inputPH: "Paste map data here",
+      outputPHCompress: "Compressed data will appear here",
+      outputPHDecompress: "Decompressed data will appear here",
+      noFile: "No file selected",
+      multi: "Multiple selected",
+      input: "Input",
+      output: "Output",
+      rateC: "Compression rate",
+      rateD: "Expansion rate",
+      noInput: "No map data",
+      notComp: "Not compressed data",
+      already: "Already compressed",
+      noAPI: "This browser does not support CompressionStream / DecompressionStream",
+      doneC: "Compression complete",
+      doneD: "Decompression complete",
+      fail: "Failed",
+      copiedIn: "Input copied to clipboard",
+      copiedOut: "Output copied to clipboard",
+      fileOne: "file",
+      files: "files",
+      themeDark: "Dark",
+      themeLight: "Light",
+    }
+  };
+
+  function tr() {
+    return T[state.lang];
   }
-  const a=$("input").value.trim().length,b=$("output").value.trim().length;
-  const r=a?((S.mode==="c"?(1-b/a):(b/a))*100).toFixed(2)+"%":"-";
-  $("stats").textContent=`${t.input}: ${a}\n${t.output}: ${b}\n${t.rate}: ${r}`;
-}
-function log(msg){$("info").textContent=msg+"\n\n"+$("info").textContent}
-function rate(a,b,m){return a?((m==="c"?(1-b/a):(b/a))*100).toFixed(2)+"%":"-"}
-function b64e(u){let s="",i=0;for(;i<u.length;i+=0x8000)s+=String.fromCharCode(...u.subarray(i,i+0x8000));return btoa(s)}
-function b64d(s){let b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u}
-function u14e(u){let o="",b=0,n=0;for(const x of u){b|=x<<n;n+=8;while(n>=14){o+=String.fromCharCode(U14+(b&16383));b>>=14;n-=14}}if(n)o+=String.fromCharCode(U14+b);return o}
-function u14d(s){let o=[],b=0,n=0;for(const c of s){if(/\s/.test(c))continue;let x=c.charCodeAt(0)-U14;if(x<0||x>=16384)continue;b|=x<<n;n+=14;while(n>=8){o.push(b&255);b>>=8;n-=8}}return new Uint8Array(o)}
-async function readFile(f){return new Promise((r,j)=>{let fr=new FileReader();fr.onload=()=>r(String(fr.result??""));fr.onerror=()=>j(new Error(tr().fail));fr.readAsText(f,"UTF-8")})}
-async function compressText(src){
-  const t=tr(); if(!window.CompressionStream) throw new Error(t.noAPI);
-  src=src.trim(); if(!src) throw new Error(t.noInput); if(src.startsWith(U)||src.startsWith(V)) throw new Error(t.already);
-  const ab=await new Response(new Blob([enc.encode(src)]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer();
-  const u=new Uint8Array(ab),p=u.length.toString(36)+":";
-  return S.style==="utf8" ? V+p+b64e(u) : U+p+u14e(u)
-}
-async function decompressText(src){
-  const t=tr(); if(!window.DecompressionStream) throw new Error(t.noAPI);
-  src=src.trim(); const uni=src.startsWith(U),utf=src.startsWith(V); if(!uni&&!utf) throw new Error(t.notComp);
-  src=src.slice((uni?U:V).length); const i=src.indexOf(":"); if(i<0) throw new Error("Invalid format");
-  const n=parseInt(src.slice(0,i),36),p=src.slice(i+1); let u=uni?u14d(p):b64d(p); if(u.length>n) u=u.subarray(0,n);
-  return dec.decode(await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer())
-}
-function stripExt(n){const i=n.lastIndexOf("."); return i>0?n.slice(0,i):n}
-function dl(name,text){const a=document.createElement("a"),u=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"})); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),800)}
-function refreshUI(){
-  setLang();
-  $("run").textContent=S.mode==="c"?tr().compress:tr().decompress;
-  $("input").placeholder=tr().inputPH;
-  $("output").placeholder=S.mode==="c"?tr().outputPH:(S.lang==="jp"?"展開後データが表示されます":"Decompressed data will appear here");
-  updateSel(); updateStats();
-}
-async function run(){
-  const t=tr();
-  try{
-    if(S.files.length>1){
-      const outs=[],rs=[];
-      for(const f of S.files){
-        const src=await readFile(f);
-        const out=S.mode==="c"?await compressText(src):await decompressText(src);
-        outs.push({name:f.name,out});
-        rs.push(rate(src.trim().length,out.trim().length,S.mode));
+
+  function setTheme(theme) {
+    state.theme = theme;
+    document.body.classList.toggle("light", theme === "light");
+    $("theme").value = theme;
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    $("mode").value = mode;
+    renderAll();
+  }
+
+  function setLang(lang) {
+    state.lang = lang;
+    $("lang").value = lang;
+    renderAll();
+  }
+
+  function buildSelects() {
+    const t = tr();
+
+    $("mode").innerHTML =
+      `<option value="c">${t.compress}</option>` +
+      `<option value="d">${t.decompress}</option>`;
+
+    $("style").innerHTML =
+      `<option value="unicode">Unicode</option>` +
+      `<option value="utf">UTF</option>`;
+
+    $("theme").innerHTML =
+      `<option value="dark">${t.themeDark}</option>` +
+      `<option value="light">${t.themeLight}</option>`;
+
+    $("mode").value = state.mode;
+    $("style").value = state.style;
+    $("theme").value = state.theme;
+    $("lang").value = state.lang;
+  }
+
+  function updateText() {
+    const t = tr();
+
+    $("title").textContent = "Dmap Compressor v2.0.0";
+    $("lblLang").textContent = "Language";
+
+    $("run").textContent = state.mode === "c" ? t.compress : t.decompress;
+    $("copyIn").textContent = t.copyIn;
+    $("copyOut").textContent = t.copyOut;
+    $("download").textContent = t.download;
+
+    $("input").placeholder = t.inputPH;
+    $("output").placeholder = state.mode === "c" ? t.outputPHCompress : t.outputPHDecompress;
+  }
+
+  function updateSelectionView() {
+    const t = tr();
+    if (!state.files.length) {
+      $("sel").textContent = t.noFile;
+      return;
+    }
+    if (state.files.length === 1) {
+      $("sel").textContent = state.files[0].name;
+      return;
+    }
+    $("sel").textContent = `${t.multi} (${state.files.length})\n` + state.files.map(f => f.name).join("\n");
+  }
+
+  function updateStats() {
+    const t = tr();
+
+    if (state.multiRates.length) {
+      const label = state.mode === "c" ? t.rateC : t.rateD;
+      $("stats").textContent = state.multiRates.map((x, i) => `${label}[${i + 1}]: ${x}`).join("\n");
+      return;
+    }
+
+    const a = $("input").value.trim().length;
+    const b = $("output").value.trim().length;
+    const rate = a
+      ? ((state.mode === "c" ? (1 - b / a) : (b / a)) * 100).toFixed(2) + "%"
+      : "-";
+
+    $("stats").textContent = `${t.input}: ${a}\n${t.output}: ${b}\n${state.mode === "c" ? t.rateC : t.rateD}: ${rate}`;
+  }
+
+  function log(msg) {
+    $("info").textContent = msg + "\n\n" + $("info").textContent;
+  }
+
+  function rate(a, b, mode) {
+    return a ? ((mode === "c" ? (1 - b / a) : (b / a)) * 100).toFixed(2) + "%" : "-";
+  }
+
+  function b64e(u8) {
+    let s = "";
+    for (let i = 0; i < u8.length; i += 0x8000) {
+      s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+    }
+    return btoa(s);
+  }
+
+  function b64d(s) {
+    const bin = atob(s);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+
+  function u14e(u8) {
+    let out = "";
+    let bits = 0;
+    let n = 0;
+
+    for (const x of u8) {
+      bits |= x << n;
+      n += 8;
+      while (n >= 14) {
+        out += String.fromCharCode(U14_BASE + (bits & 0x3fff));
+        bits >>= 14;
+        n -= 14;
       }
-      $("output").value=outs.map(v=>`[${v.name}]\n${v.out}`).join("\n\n");
-      S.multi=rs;
-      log((S.mode==="c"?t.doneC:t.doneD)+` (${S.files.length} ${t.files})`);
-    }else{
-      const src=S.files.length===1 ? await readFile(S.files[0]) : $("input").value;
-      const out=S.mode==="c"?await compressText(src):await decompressText(src);
-      $("output").value=out;
-      S.multi=[];
-      log(S.mode==="c"?t.doneC:t.doneD);
     }
+    if (n) out += String.fromCharCode(U14_BASE + bits);
+    return out;
+  }
+
+  function u14d(s) {
+    const out = [];
+    let bits = 0;
+    let n = 0;
+
+    for (const c of s) {
+      if (/\s/.test(c)) continue;
+      const x = c.charCodeAt(0) - U14_BASE;
+      if (x < 0 || x >= 16384) continue;
+      bits |= x << n;
+      n += 14;
+      while (n >= 8) {
+        out.push(bits & 255);
+        bits >>= 8;
+        n -= 8;
+      }
+    }
+    return new Uint8Array(out);
+  }
+
+  function stripExt(name) {
+    const i = name.lastIndexOf(".");
+    return i > 0 ? name.slice(0, i) : name;
+  }
+
+  function dl(name, text) {
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 800);
+  }
+
+  async function readFile(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result ?? ""));
+      fr.onerror = () => reject(new Error(tr().fail));
+      fr.readAsText(file, "UTF-8");
+    });
+  }
+
+  async function compressText(src) {
+    const t = tr();
+    if (!window.CompressionStream) throw new Error(t.noAPI);
+
+    src = src.trim();
+    if (!src) throw new Error(t.noInput);
+    if (src.startsWith(U_PREFIX) || src.startsWith(V_PREFIX)) throw new Error(t.already);
+
+    const ab = await new Response(
+      new Blob([enc.encode(src)]).stream().pipeThrough(new CompressionStream("deflate-raw"))
+    ).arrayBuffer();
+
+    const u8 = new Uint8Array(ab);
+    const header = u8.length.toString(36) + ":";
+
+    return state.style === "utf"
+      ? V_PREFIX + header + b64e(u8)
+      : U_PREFIX + header + u14e(u8);
+  }
+
+  async function decompressText(src) {
+    const t = tr();
+    if (!window.DecompressionStream) throw new Error(t.noAPI);
+
+    src = src.trim();
+    const isUnicode = src.startsWith(U_PREFIX);
+    const isUtf = src.startsWith(V_PREFIX);
+    if (!isUnicode && !isUtf) throw new Error(t.notComp);
+
+    src = src.slice((isUnicode ? U_PREFIX : V_PREFIX).length);
+    const i = src.indexOf(":");
+    if (i < 0) throw new Error("Invalid format");
+
+    const n = parseInt(src.slice(0, i), 36);
+    let u8 = isUnicode ? u14d(src.slice(i + 1)) : b64d(src.slice(i + 1));
+    if (u8.length > n) u8 = u8.subarray(0, n);
+
+    const ab = await new Response(
+      new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate-raw"))
+    ).arrayBuffer();
+
+    return dec.decode(ab);
+  }
+
+  function renderAll() {
+    buildSelects();
+    updateText();
+    updateSelectionView();
     updateStats();
-  }catch(e){alert(t.fail+": "+e.message)}
-}
-function downloadCurrent(){
-  if(S.files.length>1){
-    const chunks=$("output").value.split("\n\n");
-    for(let i=0;i<S.files.length;i++){
-      const name=stripExt(S.files[i].name)+(S.mode==="c"?"_compressed":"_decompressed")+".txt";
-      dl(name,chunks[i]||"");
+  }
+
+  async function run() {
+    const t = tr();
+    try {
+      if (state.files.length > 1) {
+        const outs = [];
+        const rates = [];
+        for (const f of state.files) {
+          const src = await readFile(f);
+          const out = state.mode === "c" ? await compressText(src) : await decompressText(src);
+          outs.push({ name: f.name, out });
+          rates.push(rate(src.trim().length, out.trim().length, state.mode));
+        }
+        $("output").value = outs.map(v => `[${v.name}]\n${v.out}`).join("\n\n");
+        state.multiRates = rates;
+        log((state.mode === "c" ? t.doneC : t.doneD) + ` (${state.files.length} ${t.files})`);
+      } else {
+        const src = state.files.length === 1 ? await readFile(state.files[0]) : $("input").value;
+        const out = state.mode === "c" ? await compressText(src) : await decompressText(src);
+        $("output").value = out;
+        state.multiRates = [];
+        log(state.mode === "c" ? t.doneC : t.doneD);
+      }
+      updateStats();
+    } catch (e) {
+      alert(t.fail + ": " + (e?.message || String(e)));
     }
-  }else{
-    const base=S.files.length===1?stripExt(S.files[0].name):"data";
-    dl(base+(S.mode==="c"?"_compressed":"_decompressed")+".txt",$("output").value);
   }
-}
-$("lang").onchange=e=>{S.lang=e.target.value; refreshUI()};
-$("mode").onchange=e=>{S.mode=e.target.value; refreshUI()};
-$("style").onchange=e=>{S.style=e.target.value; updateStats()};
-$("theme").onchange=e=>document.body.classList.toggle("light",S.theme=e.target.value==="light");
-$("file").onchange=async function(){
-  S.files=[...this.files];
-  S.multi=[];
-  if(S.files.length===1){
-    $("input").value=await readFile(S.files[0]);
-  }else if(S.files.length>1){
-    $("input").value=S.files.map(f=>f.name).join("\n");
-  }else{
-    $("input").value="";
+
+  function downloadCurrent() {
+    if (state.files.length > 1) {
+      const chunks = $("output").value.split("\n\n");
+      for (let i = 0; i < state.files.length; i++) {
+        const name = stripExt(state.files[i].name) + (state.mode === "c" ? "_compressed" : "_decompressed") + ".txt";
+        dl(name, chunks[i] || "");
+      }
+      return;
+    }
+
+    const base = state.files.length === 1 ? stripExt(state.files[0].name) : "data";
+    dl(base + (state.mode === "c" ? "_compressed" : "_decompressed") + ".txt", $("output").value);
   }
-  updateSel(); updateStats();
-  this.value="";
-};
-$("input").oninput=()=>{S.files=[]; S.multi=[]; updateSel(); updateStats()};
-$("run").onclick=run;
-$("copyIn").onclick=()=>navigator.clipboard.writeText($("input").value).then(()=>log(tr().copiedIn)).catch(()=>alert(tr().fail));
-$("copyOut").onclick=()=>navigator.clipboard.writeText($("output").value).then(()=>log(tr().copiedOut)).catch(()=>alert(tr().fail));
-$("download").onclick=downloadCurrent;
-S.theme=false;
-refreshUI();
+
+  $("lang").addEventListener("change", (e) => setLang(e.target.value));
+  $("mode").addEventListener("change", (e) => setMode(e.target.value));
+  $("style").addEventListener("change", (e) => {
+    state.style = e.target.value;
+    $("style").value = state.style;
+    updateText();
+  });
+  $("theme").addEventListener("change", (e) => setTheme(e.target.value));
+
+  $("file").addEventListener("change", async function () {
+    state.files = [...this.files];
+    state.multiRates = [];
+
+    if (state.files.length === 1) {
+      $("input").value = await readFile(state.files[0]);
+    } else if (state.files.length > 1) {
+      $("input").value = state.files.map(f => f.name).join("\n");
+    } else {
+      $("input").value = "";
+    }
+
+    updateSelectionView();
+    updateStats();
+    this.value = "";
+  });
+
+  $("input").addEventListener("input", () => {
+    state.files = [];
+    state.multiRates = [];
+    updateSelectionView();
+    updateStats();
+  });
+
+  $("run").addEventListener("click", run);
+  $("copyIn").addEventListener("click", () =>
+    navigator.clipboard.writeText($("input").value).then(() => log(tr().copiedIn)).catch(() => alert(tr().fail))
+  );
+  $("copyOut").addEventListener("click", () =>
+    navigator.clipboard.writeText($("output").value).then(() => log(tr().copiedOut)).catch(() => alert(tr().fail))
+  );
+  $("download").addEventListener("click", downloadCurrent);
+
+  setTheme(state.theme);
+  renderAll();
+})();
 </script>
+</body>
 </html>
