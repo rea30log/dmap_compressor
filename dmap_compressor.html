@@ -26,15 +26,18 @@ body{
   background:var(--bg);
   color:var(--fg);
   transition:.2s;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
 }
 *{box-sizing:border-box}
-h2{margin:0 0 12px;font-size:22px}
+h2{margin:0;font-size:22px}
 .row{
   display:flex;
   gap:8px;
   flex-wrap:wrap;
   align-items:center;
-  margin:0 0 10px;
+  margin:0;
 }
 label{white-space:nowrap}
 select,input,button,textarea{
@@ -51,16 +54,20 @@ textarea{
   width:100%;
   height:170px;
   resize:vertical;
+  margin:0;
 }
-input[type=file]{width:100%}
+input[type=file]{
+  width:100%;
+  margin:0;
+}
 .stats,#info,.sel{
   white-space:pre-line;
   background:var(--box);
   border:1px solid var(--bd);
   border-radius:8px;
   padding:10px;
+  margin:0;
 }
-.sel{margin:8px 0 10px}
 button.inline{width:auto}
 .muted{opacity:.8}
 </style>
@@ -109,6 +116,7 @@ Output: 0
 (() => {
   const U_PREFIX = "M:c:";
   const V_PREFIX = "M:u:";
+  const COMPRESSED_MARK = "DMAP1|";
   const U14_BASE = 0x4E00;
 
   const enc = new TextEncoder();
@@ -123,6 +131,8 @@ Output: 0
     theme: "dark",  // dark | light
     files: [],
     multiRates: [],
+    multiOutputs: [],
+    statsReady: true,
   };
 
   const T = {
@@ -142,7 +152,7 @@ Output: 0
       rateC: "圧縮率",
       rateD: "展開率",
       noInput: "マップデータがありません",
-      notComp: "圧縮データではありません",
+      notComp: "展開データではありません",
       already: "すでに圧縮済みです",
       noAPI: "このブラウザは CompressionStream / DecompressionStream に対応していません",
       doneC: "圧縮完了",
@@ -150,6 +160,7 @@ Output: 0
       fail: "失敗",
       copiedIn: "入力をクリップボードにコピーしました",
       copiedOut: "出力をクリップボードにコピーしました",
+      chooseCopy: "どのデータをクリップボードに貼り付けますか？\n番号を入力してください。",
       fileOne: "件",
       files: "ファイル",
       themeDark: "ダーク",
@@ -171,7 +182,7 @@ Output: 0
       rateC: "Compression rate",
       rateD: "Expansion rate",
       noInput: "No map data",
-      notComp: "Not compressed data",
+      notComp: "Not decompressed data",
       already: "Already compressed",
       noAPI: "This browser does not support CompressionStream / DecompressionStream",
       doneC: "Compression complete",
@@ -179,6 +190,7 @@ Output: 0
       fail: "Failed",
       copiedIn: "Input copied to clipboard",
       copiedOut: "Output copied to clipboard",
+      chooseCopy: "Which data should be copied to the clipboard?\nEnter the number.",
       fileOne: "file",
       files: "files",
       themeDark: "Dark",
@@ -188,6 +200,46 @@ Output: 0
 
   function tr() {
     return T[state.lang];
+  }
+
+  function normalizeHead(text) {
+    let s = String(text ?? "").replace(/^\uFEFF/, "").trimStart();
+    if (!s) return s;
+    const lines = s.split(/\r?\n/);
+    if (lines.length > 1 && /^\[[^\]]+\]$/.test(lines[0].trim())) {
+      s = lines.slice(1).join("\n").trimStart();
+    }
+    return s;
+  }
+
+  function detectModeFromText(text) {
+    const s = normalizeHead(text);
+    if (!s) return state.mode;
+    if (s.startsWith(COMPRESSED_MARK)) return "d";
+    if (s.startsWith(U_PREFIX) || s.startsWith(V_PREFIX)) return "d";
+    return "c";
+  }
+
+  function parsePayload(text) {
+    const s = normalizeHead(text);
+    if (!s) return { kind: "", body: "" };
+
+    if (s.startsWith(COMPRESSED_MARK)) {
+      const rest = s.slice(COMPRESSED_MARK.length);
+      const kind = rest.charAt(0);
+      if (rest.charAt(1) !== "|") return { kind: "", body: "" };
+      return { kind, body: rest.slice(2) };
+    }
+
+    if (s.startsWith(U_PREFIX)) return { kind: "c", body: s.slice(U_PREFIX.length) };
+    if (s.startsWith(V_PREFIX)) return { kind: "u", body: s.slice(V_PREFIX.length) };
+    return { kind: "", body: s };
+  }
+
+  function resetStatsDisplay() {
+    state.statsReady = false;
+    $("output").value = "";
+    updateStats();
   }
 
   function setTheme(theme) {
@@ -232,7 +284,7 @@ Output: 0
   function updateText() {
     const t = tr();
 
-    $("title").textContent = "Dmap Compressor v2.0.1";
+    $("title").textContent = "Dmap Compressor v2.1.2";
     $("lblLang").textContent = "Language";
 
     $("run").textContent = state.mode === "c" ? t.compress : t.decompress;
@@ -268,7 +320,7 @@ Output: 0
 
     const a = $("input").value.trim().length;
     const b = $("output").value.trim().length;
-    const rate = a
+    const rate = state.statsReady && a
       ? ((state.mode === "c" ? (1 - b / a) : (b / a)) * 100).toFixed(2) + "%"
       : "-";
 
@@ -424,6 +476,7 @@ Output: 0
           outs.push({ name: f.name, out });
           rates.push(rate(src.trim().length, out.trim().length, state.mode));
         }
+        state.multiOutputs = outs;
         $("output").value = outs.map(v => `[${v.name}]\n${v.out}`).join("\n\n");
         state.multiRates = rates;
         log((state.mode === "c" ? t.doneC : t.doneD) + ` (${state.files.length} ${t.files})`);
@@ -432,6 +485,7 @@ Output: 0
         const out = state.mode === "c" ? await compressText(src) : await decompressText(src);
         $("output").value = out;
         state.multiRates = [];
+        state.multiOutputs = [];
         log(state.mode === "c" ? t.doneC : t.doneD);
       }
       updateStats();
@@ -454,6 +508,7 @@ Output: 0
     dl(base + (state.mode === "c" ? "_compressed" : "_decompressed") + ".txt", $("output").value);
   }
 
+  // Events
   $("lang").addEventListener("change", (e) => setLang(e.target.value));
   $("mode").addEventListener("change", (e) => setMode(e.target.value));
   $("style").addEventListener("change", (e) => {
@@ -466,36 +521,73 @@ Output: 0
   $("file").addEventListener("change", async function () {
     state.files = [...this.files];
     state.multiRates = [];
-
-    if (state.files.length === 1) {
-      $("input").value = await readFile(state.files[0]);
-    } else if (state.files.length > 1) {
-      $("input").value = state.files.map(f => f.name).join("\n");
-    } else {
-      $("input").value = "";
-    }
-
+    state.multiOutputs = [];
+    state.statsReady = false;
+    $("input").value = "";
+    $("output").value = "";
     updateSelectionView();
     updateStats();
+
+    try {
+      if (state.files.length === 1) {
+        const text = await readFile(state.files[0]);
+        $("input").value = text;
+        state.mode = detectModeFromText(text);
+      } else if (state.files.length > 1) {
+        const texts = await Promise.all(state.files.map(readFile));
+        $("input").value = texts.join("\n\n");
+        const modes = texts.map(detectModeFromText);
+        const d = modes.filter(v => v === "d").length;
+        const c = modes.filter(v => v === "c").length;
+        if (d !== c) state.mode = d > c ? "d" : "c";
+        else if (modes[0]) state.mode = modes[0];
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+
+    renderAll();
     this.value = "";
   });
 
   $("input").addEventListener("input", () => {
     state.files = [];
     state.multiRates = [];
+    state.multiOutputs = [];
+    state.statsReady = true;
     updateSelectionView();
-    updateStats();
+    const changed = syncModeFromText($("input").value);
+    if (!changed) updateStats();
   });
 
   $("run").addEventListener("click", run);
   $("copyIn").addEventListener("click", () =>
     navigator.clipboard.writeText($("input").value).then(() => log(tr().copiedIn)).catch(() => alert(tr().fail))
   );
-  $("copyOut").addEventListener("click", () =>
-    navigator.clipboard.writeText($("output").value).then(() => log(tr().copiedOut)).catch(() => alert(tr().fail))
-  );
+  $("copyOut").addEventListener("click", async () => {
+    try {
+      if (state.multiOutputs.length > 1) {
+        const list = state.multiOutputs.map((v, i) => `${i + 1}: ${v.name}`).join("\n");
+        const choice = prompt(tr().chooseCopy + "\n\n" + list, "1");
+        if (choice === null) return;
+        const idx = Number(choice);
+        if (!Number.isInteger(idx) || idx < 1 || idx > state.multiOutputs.length) {
+          alert(tr().fail + ": invalid selection");
+          return;
+        }
+        await navigator.clipboard.writeText(state.multiOutputs[idx - 1].out);
+        log(tr().copiedOut + ` (${state.multiOutputs[idx - 1].name})`);
+      } else {
+        await navigator.clipboard.writeText($("output").value);
+        log(tr().copiedOut);
+      }
+    } catch (e) {
+      alert(tr().fail + ": " + (e?.message || String(e)));
+    }
+  });
   $("download").addEventListener("click", downloadCurrent);
 
+  // Initial state
   setTheme(state.theme);
   renderAll();
 })();
