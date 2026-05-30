@@ -116,8 +116,10 @@ Output: 0
 (() => {
   const U_PREFIX = "M:c:";
   const V_PREFIX = "M:u:";
+  const W_PREFIX = "M:w:";
   const COMPRESSED_MARK = "DMAP1|";
   const U14_BASE = 0x4E00;
+  const U15_BASE = 0x7FFF;
 
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -127,7 +129,7 @@ Output: 0
   const state = {
     lang: "jp",
     mode: "c",      // c = compress, d = decompress
-    style: "unicode", // unicode | utf
+    style: "unicode2", // unicode | utf
     theme: "dark",  // dark | light
     files: [],
     multiRates: [],
@@ -220,7 +222,7 @@ Output: 0
     const s = normalizeHead(text);
     if (!s) return state.mode;
     if (s.startsWith(COMPRESSED_MARK)) return "d";
-    if (s.startsWith(U_PREFIX) || s.startsWith(V_PREFIX)) return "d";
+    if (s.startsWith(U_PREFIX) || s.startsWith(V_PREFIX) || s.startsWith(W_PREFIX)) return "d";
     return "c";
   }
 
@@ -246,6 +248,7 @@ Output: 0
 
     if (s.startsWith(U_PREFIX)) return { kind: "c", body: s.slice(U_PREFIX.length) };
     if (s.startsWith(V_PREFIX)) return { kind: "u", body: s.slice(V_PREFIX.length) };
+    if (s.startsWith(W_PREFIX)) return { kind: "w", body: s.slice(W_PREFIX.length) };
     return { kind: "", body: s };
   }
 
@@ -280,7 +283,8 @@ Output: 0
       `<option value="d">${t.decompress}</option>`;
 
     $("style").innerHTML =
-      `<option value="unicode">Unicode</option>` +
+      `<option value="unicode2">Unicode1</option>` +
+      `<option value="unicode">Unicode2(stable)</option>` +
       `<option value="utf">UTF</option>`;
 
     $("theme").innerHTML =
@@ -404,10 +408,82 @@ Output: 0
     return new Uint8Array(out);
   }
 
-  function stripExt(name) {
-    const i = name.lastIndexOf(".");
-    return i > 0 ? name.slice(0, i) : name;
-  }
+    const U15_LOW_BASE = 0x3400;
+    const U15_HIGH_BASE = 0xAC00;
+    
+    function u15e(u8) {
+      let out = "";
+      let bits = 0;
+      let n = 0;
+    
+      for (const x of u8) {
+        bits |= x << n;
+        n += 8;
+    
+        while (n >= 15) {
+          let v = bits & 0x7FFF;
+    
+          out += String.fromCharCode(
+            v < 0x5800
+              ? U15_LOW_BASE + v
+              : U15_HIGH_BASE + (v - 0x5800)
+          );
+    
+          bits >>= 15;
+          n -= 15;
+        }
+      }
+    
+      if (n) {
+        let v = bits;
+    
+        out += String.fromCharCode(
+          v < 0x5800
+            ? U15_LOW_BASE + v
+            : U15_HIGH_BASE + (v - 0x5800)
+        );
+      }
+    
+      return out;
+    }
+
+    function u15d(s) {
+      const out = [];
+      let bits = 0;
+      let n = 0;
+    
+      for (const c of s) {
+        const cc = c.charCodeAt(0);
+    
+        let v = -1;
+    
+        if (
+          cc >= U15_LOW_BASE &&
+          cc < U15_LOW_BASE + 0x5800
+        ) {
+          v = cc - U15_LOW_BASE;
+        }
+        else if (
+          cc >= U15_HIGH_BASE &&
+          cc < U15_HIGH_BASE + (0x8000 - 0x5800)
+        ) {
+          v = (cc - U15_HIGH_BASE) + 0x5800;
+        }
+    
+        if (v < 0) continue;
+    
+        bits |= v << n;
+        n += 15;
+    
+        while (n >= 8) {
+          out.push(bits & 255);
+          bits >>= 8;
+          n -= 8;
+        }
+      }
+    
+      return new Uint8Array(out);
+    }
 
   function dl(name, text) {
     const a = document.createElement("a");
@@ -435,7 +511,7 @@ Output: 0
 
     src = src.trim();
     if (!src) throw new Error(t.noInput);
-    if (src.startsWith(U_PREFIX) || src.startsWith(V_PREFIX)) throw new Error(t.already);
+    if (src.startsWith(U_PREFIX) || src.startsWith(V_PREFIX) || src.startsWith(W_PREFIX)) throw new Error(t.already);
 
     const ab = await new Response(
       new Blob([enc.encode(src)]).stream().pipeThrough(new CompressionStream("deflate-raw"))
@@ -446,6 +522,8 @@ Output: 0
 
     return state.style === "utf"
       ? V_PREFIX + header + b64e(u8)
+      : state.style === "unicode2"
+      ? W_PREFIX + header + u15e(u8)
       : U_PREFIX + header + u14e(u8);
   }
 
@@ -458,12 +536,15 @@ Output: 0
 
     const isUnicode = payload.kind === "c";
     const isUtf = payload.kind === "u";
+    const isUnicode2 = payload.kind === "w";
     let body = String(payload.body ?? "").trim();
     const i = body.indexOf(":");
     if (i < 0) throw new Error("Invalid format");
 
     const n = parseInt(body.slice(0, i), 36);
-    let u8 = isUnicode ? u14d(body.slice(i + 1)) : b64d(body.slice(i + 1));
+    let u8 = isUnicode ? u14d(body.slice(i + 1))
+      : isUnicode2 ? u15d(body.slice(i + 1))
+      : b64d(body.slice(i + 1));
     if (u8.length > n) u8 = u8.subarray(0, n);
 
     const ab = await new Response(
