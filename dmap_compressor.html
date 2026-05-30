@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Map Compressor (Enhanced)</title>
+<style>
+body{
+  background:#111;
+  color:#eee;
+  font-family:Arial,sans-serif;
+  padding:20px;
+}
+h2{ margin:0 0 12px; }
+textarea{
+  width:100%;
+  height:260px;
+  background:#222;
+  color:#fff;
+  border:1px solid #555;
+  padding:10px;
+  box-sizing:border-box;
+  font-family:monospace;
+  resize:vertical;
+}
+button,select{
+  padding:10px;
+  margin:5px 5px 5px 0;
+  font-size:15px;
+}
+button{
+  background:#000;
+  color:#fff;
+  border:1px solid #555;
+  cursor:pointer;
+}
+button:hover{
+  background:#1a1a1a;
+}
+button.active{
+  outline:2px solid #8f8;
+}
+select{
+  background:#000;
+  color:#fff;
+  border:1px solid #555;
+}
+#info{
+  margin-top:10px;
+  white-space:pre-line;
+  color:#fff;
+  text-shadow:0 0 2px #000, 0 0 4px #000;
+  max-height:220px;
+  overflow:auto;
+  padding:8px 10px;
+  border:1px solid #333;
+  background:#161616;
+  border-radius:8px;
+}
+.row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:10px;
+  flex-wrap:wrap;
+}
+.label{
+  color:#ddd;
+  min-width:72px;
+}
+.modeBtn{
+  min-width:92px;
+}
+</style>
+</head>
+<body>
+
+<h2>Dmap Compressor</h2>
+
+<div class="row">
+  <span class="label">Language:</span>
+  <select id="lang" onchange="setLang()">
+    <option value="jp">日本語</option>
+    <option value="en">English</option>
+  </select>
+</div>
+
+<div class="row">
+  <span id="encodingLabel" class="label">Encoding:</span>
+  <button id="unicodeModeBtn" class="modeBtn" onclick="setEncoding('unicode')">Unicode</button>
+  <button id="utfModeBtn" class="modeBtn" onclick="setEncoding('utf')">UTF</button>
+</div>
+
+<textarea id="map" placeholder="マップデータをここに貼り付け"></textarea>
+
+<br>
+
+<button id="compressBtn" onclick="compressBest()">圧縮</button>
+<button id="decompressBtn" onclick="decompressMap()">解凍</button>
+<button id="copyBtn" onclick="copyMap()">コピー</button>
+
+<div id="info"></div>
+
+<script>
+const HEAD_UNI = "M:c:";
+const HEAD_UTF = "M:u:";
+
+const B91 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\"";
+const B91MAP = new Map([...B91].map((c, i) => [c, i]));
+const U14_0 = 0x4E00; 
+
+let t;
+let selectedEncoding = "unicode";
+
+function addLog(text){
+  const infoEl = document.getElementById("info");
+  const current = infoEl.innerText.trim();
+  infoEl.innerText = current ? text + "\n\n" + current : text;
+}
+
+function setLang(){
+  const l = document.getElementById("lang").value;
+  if(l === "en"){
+    t = {
+      compressed: "Compressed (Deflate)",
+      done: "Decompressed",
+      fail: "Failed",
+      already: "Already compressed",
+      notCompressed: "Not compressed data",
+      empty: "No map data",
+      compress: "Compress",
+      decompress: "Decompress",
+      copy: "Copy",
+      placeholder: "Paste map data here",
+      encoding: "Encoding:",
+      copied: "Copied to clipboard",
+      noApi: "CompressionStream API is not supported in this browser.",
+      compRate: "Compression Rate"
+    };
+  }else{
+    t = {
+      compressed: "圧縮完了 (Deflate)",
+      done: "解凍完了",
+      fail: "失敗",
+      already: "すでに圧縮済みです",
+      notCompressed: "圧縮データではありません",
+      empty: "マップデータがありません",
+      compress: "圧縮",
+      decompress: "解凍",
+      copy: "コピー",
+      placeholder: "マップデータをここに貼り付け",
+      encoding: "Encoding:",
+      copied: "クリップボードにコピーしました",
+      noApi: "ブラウザがCompressionStream APIに対応していません。",
+      compRate: "圧縮率"
+    };
+  }
+
+  document.getElementById("compressBtn").innerText = t.compress;
+  document.getElementById("decompressBtn").innerText = t.decompress;
+  document.getElementById("copyBtn").innerText = t.copy;
+  document.getElementById("encodingLabel").innerText = t.encoding;
+  document.getElementById("map").placeholder = t.placeholder;
+  updateModeUI();
+}
+
+function setEncoding(mode){
+  selectedEncoding = mode;
+  updateModeUI();
+}
+
+function updateModeUI(){
+  document.getElementById("unicodeModeBtn").classList.toggle("active", selectedEncoding === "unicode");
+  document.getElementById("utfModeBtn").classList.toggle("active", selectedEncoding === "utf");
+}
+setLang();
+
+
+function b91enc(data){
+  let out = ""; let b = 0; let n = 0;
+  for(const x of data){
+    b |= x << n; n += 8;
+    if(n > 13){
+      let v = b & 8191;
+      if(v > 88){ b >>= 13; n -= 13; }
+      else{ v = b & 16383; b >>= 14; n -= 14; }
+      out += B91[v % 91] + B91[(v / 91) | 0];
+    }
+  }
+  if(n){
+    out += B91[b % 91];
+    if(n > 7 || b > 90) out += B91[(b / 91) | 0];
+  }
+  return out;
+}
+
+function b91dec(str){
+  const out = []; let v = -1; let b = 0; let n = 0;
+  for(const c of str){
+    if(/\s/.test(c)) continue;
+    const p = B91MAP.get(c);
+    if(p === undefined) throw new Error("Invalid Base91 character");
+    if(v < 0){ v = p; }
+    else{
+      v += p * 91; b |= v << n; n += (v & 8191) > 88 ? 13 : 14;
+      while(n >= 8){ out.push(b & 255); b >>= 8; n -= 8; }
+      v = -1;
+    }
+  }
+  if(v >= 0) out.push((b | (v << n)) & 255);
+  return new Uint8Array(out);
+}
+
+
+function unicode14Enc(bytes){
+  let out = ""; let b = 0; let n = 0;
+  for(const x of bytes){
+    b |= x << n; n += 8;
+    while(n >= 14){
+      out += String.fromCharCode(U14_0 + (b & 16383));
+      b >>= 14; n -= 14;
+    }
+  }
+  if(n > 0) out += String.fromCharCode(U14_0 + b);
+  return out;
+}
+
+function unicode14Dec(str){
+  const out = []; let b = 0; let n = 0;
+  for(const c of str){
+    if(/\s/.test(c)) continue;
+    const code = c.charCodeAt(0) - U14_0;
+    if(code < 0 || code >= 16384) continue;
+    b |= code << n; n += 14;
+    while(n >= 8){ out.push(b & 255); b >>= 8; n -= 8; }
+  }
+  return new Uint8Array(out);
+}
+
+
+async function compressBest(){
+  if (!window.CompressionStream) return alert(t.noApi);
+  const ta = document.getElementById("map");
+  const raw = ta.value.trim();
+  if(!raw){ alert(t.empty); return; }
+  if(raw.startsWith(HEAD_UNI) || raw.startsWith(HEAD_UTF)){ alert(t.already); return; }
+
+  try {
+    const rawBytes = new TextEncoder().encode(raw);
+    const stream = new Blob([rawBytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    const buf = await new Response(stream).arrayBuffer();
+    const cBytes = new Uint8Array(buf);
+
+    
+    const lenInfo = cBytes.length.toString(36) + ":";
+
+    let out = "";
+    if(selectedEncoding === "utf"){
+      out = HEAD_UTF + lenInfo + b91enc(cBytes);
+    }else{
+      out = HEAD_UNI + lenInfo + unicode14Enc(cBytes);
+    }
+
+    
+    const compressionRate = ((1 - out.length / raw.length) * 100).toFixed(2);
+    const unitText = (document.getElementById("lang").value === "en") ? " chars" : " 文字";
+
+    ta.value = out;
+    addLog(
+      t.compressed + "\n" +
+      (selectedEncoding === "utf" ? "UTF (Base91)" : "Unicode (14-bit CJK)") + "\n" +
+      raw.length + " → " + out.length + unitText + " (" + t.compRate + ": " + compressionRate + "%)"
+    );
+  }catch(e){
+    alert(t.fail + ": " + e.message);
+  }
+}
+
+
+async function decompressMap(){
+  if (!window.DecompressionStream) return alert(t.noApi);
+  const ta = document.getElementById("map");
+  const raw = ta.value.trim();
+  
+  const isUni = raw.startsWith(HEAD_UNI);
+  const isUtf = raw.startsWith(HEAD_UTF);
+  if(!isUni && !isUtf){ alert(t.notCompressed); return; }
+
+  try{
+    const prefix = isUni ? HEAD_UNI : HEAD_UTF;
+    const rest = raw.slice(prefix.length);
+    
+    
+    const splitIdx = rest.indexOf(":");
+    if(splitIdx < 0) throw new Error("Invalid format");
+    const expectedLen = parseInt(rest.slice(0, splitIdx), 36);
+    const payload = rest.slice(splitIdx + 1);
+
+    let cBytes;
+    if(isUni){
+      cBytes = unicode14Dec(payload);
+    }else{
+      cBytes = b91dec(payload);
+    }
+
+    
+    if (cBytes.length > expectedLen) {
+      cBytes = cBytes.subarray(0, expectedLen);
+    }
+
+    const stream = new Blob([cBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    const buf = await new Response(stream).arrayBuffer();
+    
+    ta.value = new TextDecoder().decode(buf);
+    addLog(t.done);
+  }catch(e){
+    alert(t.fail + ": " + e.message);
+  }
+}
+
+
+async function copyMap(){
+  try {
+    await navigator.clipboard.writeText(document.getElementById("map").value);
+    addLog(t.copied);
+  } catch(e) {
+    alert(t.fail);
+  }
+}
+</script>
+</body>
+</html>
