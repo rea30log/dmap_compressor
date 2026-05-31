@@ -68,6 +68,30 @@ input[type=file]{
   padding:10px;
   margin:0;
 }
+
+.stats{
+  display:inline-block;
+  width:fit-content;
+  max-width:100%;
+}
+
+.statsWrap{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:flex-start;
+}
+
+#info{
+  width:100%;
+  display:block;
+}
+
+#predict{
+  display:inline-block;
+  width:fit-content;
+  max-width:100%;
+}
 button.inline{width:auto}
 .muted{opacity:.8}
 </style>
@@ -104,9 +128,15 @@ button.inline{width:auto}
   <button class="inline" id="copyIn">入力をコピー</button>
 </div>
 
-<div class="stats" id="stats">Input: 0
+<div class="row" id="statsRow">
+<div class="statsWrap">
+  <div class="stats" id="stats">Input: 0
 Output: 0
 圧縮率: -</div>
+
+  <div class="stats" id="predict">予想: -</div>
+</div>
+</div>
 
 <textarea id="output" readonly placeholder="圧縮後データが表示されます"></textarea>
 
@@ -331,6 +361,7 @@ Output: 0
       themeLight: "ライト",
       fileName: "ファイル名",
       fileNamePH: "ダウンロード名を入力",
+      predict: "予想",
     },
     en: {
       compress: "Compress",
@@ -364,6 +395,7 @@ Output: 0
       themeLight: "Light",
       fileName: "File name",
       fileNamePH: "Enter download name",
+      predict: "Estimated",
     }
   };
 
@@ -465,7 +497,7 @@ Output: 0
   function updateText() {
     const t = tr();
 
-    $("title").textContent = "Dmap Compressor v2.3.5";
+    $("title").textContent = "Dmap Compressor v2.3.6";
     $("lblLang").textContent = "Language";
     const fileLabel = $("fileNameSet")?.previousElementSibling;
     if (fileLabel && fileLabel.tagName === "LABEL") fileLabel.textContent = t.fileName;
@@ -500,27 +532,65 @@ Output: 0
     if (fileNameSet) fileNameSet.value = sanitizeFileName(stripExt(state.files[0].name) + "_bundle");
   }
 
-  function updateStats() {
-    const t = tr();
+async function updateStats() {
+  const t = tr();
+  const predictBox = $("predict");
 
-    if (state.multiRates.length) {
-      const label = state.mode === "c" ? t.rateC : t.rateD;
-      $("stats").textContent = state.multiRates.map((x, i) => {
-        const inp = state.multiInputs?.[i] ?? 0;
-        const out = state.multiLengths?.[i] ?? 0;
-        return `${t.input}[${i + 1}]: ${inp}\n${t.output}[${i + 1}]: ${out}\n${label}[${i + 1}]: ${x}`;
-      }).join("\n\n");
-      return;
-    }
+  if (state.multiRates.length) {
+    const label = state.mode === "c" ? t.rateC : t.rateD;
 
-    const a = $("input").value.trim().length;
-    const b = $("output").value.trim().length;
-    const rate = state.statsReady && a
-      ? ((state.mode === "c" ? (1 - b / a) : (b / a)) * 100).toFixed(2) + "%"
-      : "-";
+    $("stats").textContent = state.multiRates.map((x, i) => {
+      const inp = state.multiInputs?.[i] ?? 0;
+      const out = state.multiLengths?.[i] ?? 0;
+      return `${t.input}[${i + 1}]: ${inp}\n${t.output}[${i + 1}]: ${out}\n${label}[${i + 1}]: ${x}`;
+    }).join("\n\n");
 
-    $("stats").textContent = `${t.input}: ${a}\n${t.output}: ${b}\n${state.mode === "c" ? t.rateC : t.rateD}: ${rate}`;
+    predictBox.textContent = `${t.predict}\n${t.output}: -\n${state.mode === "c" ? t.rateC : t.rateD}: -`;
+    predictBox.style.display = "inline-block";
+    return;
   }
+
+  const a = $("input").value.trim().length;
+  const b = $("output").value.trim().length;
+
+  const rate = state.statsReady && a
+    ? ((state.mode === "c" ? (1 - b / a) : (b / a)) * 100).toFixed(2) + "%"
+    : "-";
+
+  $("stats").textContent =
+`${t.input}: ${a}
+${t.output}: ${b}
+${state.mode === "c" ? t.rateC : t.rateD}: ${rate}`;
+
+  let predOut = "-";
+  let predRate = "-";
+
+  try {
+    if (a && state.files.length) {
+      const src = $("input").value;
+      const pred = state.mode === "c"
+        ? await compressText(src)
+        : await decompressText(normalizeHead(src));
+
+      const pb = pred.trim().length;
+      predOut = pb;
+
+      predRate = (
+        ((state.mode === "c" ? (1 - pb / a) : (pb / a)) * 100)
+      ).toFixed(2) + "%";
+    }
+  } catch (e) {
+    predOut = "-";
+    predRate = "-";
+  }
+
+  predictBox.textContent =
+`${t.predict}
+${t.output}: ${predOut}
+${state.mode === "c" ? t.rateC : t.rateD}: ${predRate}`;
+
+  predictBox.style.display = "inline-block";
+}
 
   function log(msg) {
     $("info").textContent = msg + "\n\n" + $("info").textContent;
@@ -871,7 +941,7 @@ async function updateFileView() {
   $("output").value = "";
 
   updateSelectionView();
-  updateStats();
+  await updateStats();
 
   try {
     if (state.files.length === 1) {
