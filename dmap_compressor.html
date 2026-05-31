@@ -88,7 +88,11 @@ button.inline{width:auto}
   <select id="theme"></select>
 </div>
 
-<input id="file" type="file" accept=".txt,text/plain" multiple>
+<div class="row">
+  <button id="pickReplace" type="button">ファイルを選択</button>
+  <button id="pickAdd" type="button">ファイルを追加</button>
+  <input id="file" type="file" accept=".txt,text/plain" multiple hidden>
+</div>
 
 <div class="sel" id="sel">ファイル未選択</div>
 
@@ -96,6 +100,7 @@ button.inline{width:auto}
 
 <div class="row">
   <button class="inline" id="run">圧縮</button>
+  <button class="inline" id="copyOut">出力をコピー</button>
   <button class="inline" id="copyIn">入力をコピー</button>
 </div>
 
@@ -106,8 +111,13 @@ Output: 0
 <textarea id="output" readonly placeholder="圧縮後データが表示されます"></textarea>
 
 <div class="row">
-  <button class="inline" id="copyOut">出力をコピー</button>
-  <button class="inline" id="download">txtをダウンロード</button>
+  <label for="fileNameSet">ファイル名</label>
+  <input id="fileNameSet" type="text" placeholder="ダウンロード名を入力">
+</div>
+
+<div class="row">
+  <button class="inline" id="downloadTxt">txtでダウンロード</button>
+  <button class="inline" id="downloadZip">zipでダウンロード</button>
 </div>
 
 <div id="info" class="stats muted"></div>
@@ -125,6 +135,155 @@ Output: 0
   const dec = new TextDecoder();
 
   const $ = (id) => document.getElementById(id);
+  function stripExt(name) {
+    const s = String(name ?? "").trim();
+    const i = s.lastIndexOf(".");
+    if (i <= 0) return s || "data";
+    return s.slice(0, i);
+  }
+
+  function sanitizeFileName(name) {
+    return String(name ?? "")
+      .replace(/[\\\/:*?"<>|]+/g, "_")
+      .replace(/\s+/g, " ")
+      .trim() || "data";
+  }
+
+  function getDownloadBase() {
+    const typed = sanitizeFileName($("fileNameSet")?.value ?? "");
+    if (typed) return typed;
+    if (state.files.length === 1) return sanitizeFileName(stripExt(state.files[0].name));
+    if (state.files.length > 1) return sanitizeFileName(stripExt(state.files[0].name) + "_bundle");
+    return "data";
+  }
+
+  function u32le(n) {
+    return new Uint8Array([
+      n & 255,
+      (n >>> 8) & 255,
+      (n >>> 16) & 255,
+      (n >>> 24) & 255
+    ]);
+  }
+
+  function u16le(n) {
+    return new Uint8Array([
+      n & 255,
+      (n >>> 8) & 255
+    ]);
+  }
+
+  function dosDateTime(date = new Date()) {
+    const y = Math.max(1980, date.getFullYear());
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    const h = date.getHours();
+    const mi = date.getMinutes();
+    const s = Math.floor(date.getSeconds() / 2);
+    const time = (h << 11) | (mi << 5) | s;
+    const day = ((y - 1980) << 9) | (m << 5) | d;
+    return { time, day };
+  }
+
+  const CRC_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      table[i] = c >>> 0;
+    }
+    return table;
+  })();
+
+  function crc32(u8) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < u8.length; i++) {
+      crc = CRC_TABLE[(crc ^ u8[i]) & 255] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function buildZipBlob(entries) {
+    const enc = new TextEncoder();
+    const fileParts = [];
+    const centralParts = [];
+    let offset = 0;
+    const dt = dosDateTime(new Date());
+
+    for (const entry of entries) {
+      const nameBytes = enc.encode(entry.name);
+      const dataBytes = entry.data instanceof Uint8Array ? entry.data : enc.encode(String(entry.data ?? ""));
+      const crc = crc32(dataBytes);
+
+      const localHeader = [
+        u32le(0x04034b50),
+        u16le(20),
+        u16le(0),
+        u16le(0),
+        u16le(dt.time),
+        u16le(dt.day),
+        u32le(crc),
+        u32le(dataBytes.length),
+        u32le(dataBytes.length),
+        u16le(nameBytes.length),
+        u16le(0),
+        nameBytes
+      ];
+      const localHeaderLen = localHeader.reduce((n, a) => n + a.length, 0);
+      fileParts.push(...localHeader, dataBytes);
+
+      const centralHeader = [
+        u32le(0x02014b50),
+        u16le(20),
+        u16le(20),
+        u16le(0),
+        u16le(0),
+        u16le(dt.time),
+        u16le(dt.day),
+        u32le(crc),
+        u32le(dataBytes.length),
+        u32le(dataBytes.length),
+        u16le(nameBytes.length),
+        u16le(0),
+        u16le(0),
+        u16le(0),
+        u16le(0),
+        u32le(0),
+        u32le(offset),
+        nameBytes
+      ];
+      centralParts.push(...centralHeader);
+      offset += localHeaderLen + dataBytes.length;
+    }
+
+    const centralSize = centralParts.reduce((n, a) => n + a.length, 0);
+    const eocd = [
+      u32le(0x06054b50),
+      u16le(0),
+      u16le(0),
+      u16le(entries.length),
+      u16le(entries.length),
+      u32le(centralSize),
+      u32le(offset),
+      u16le(0)
+    ];
+
+    return new Blob([...fileParts, ...centralParts, ...eocd], { type: "application/zip" });
+  }
+
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 800);
+  }
+
 
   const state = {
     lang: "jp",
@@ -145,8 +304,9 @@ Output: 0
       decompress: "展開",
       copyIn: "入力をコピー",
       copyOut: "出力をコピー",
-      download: "txtをダウンロード",
-      inputPH: "ファイルから読み込むまたはマップデータ直接を貼る",
+      downloadTxt: "ダウンロード：txt",
+      downloadZip: "ダウンロード：zip",
+      inputPH: "ここにdmapを直接貼り付けても使えます",
       outputPHCompress: "圧縮後データが表示されます",
       outputPHDecompress: "展開後データが表示されます",
       noFile: "ファイル未選択",
@@ -169,13 +329,16 @@ Output: 0
       files: "ファイル",
       themeDark: "ダーク",
       themeLight: "ライト",
+      fileName: "ファイル名",
+      fileNamePH: "ダウンロード名を入力",
     },
     en: {
       compress: "Compress",
       decompress: "Decompress",
       copyIn: "Copy Input",
       copyOut: "Copy Output",
-      download: "Download TXT",
+      downloadTxt: "Download : txt",
+      downloadZip: "Download : zip",
       inputPH: "Paste map data here",
       outputPHCompress: "Compressed data will appear here",
       outputPHDecompress: "Decompressed data will appear here",
@@ -199,6 +362,8 @@ Output: 0
       files: "files",
       themeDark: "Dark",
       themeLight: "Light",
+      fileName: "File name",
+      fileNamePH: "Enter download name",
     }
   };
 
@@ -300,13 +465,17 @@ Output: 0
   function updateText() {
     const t = tr();
 
-    $("title").textContent = "Dmap Compressor v2.1.4";
+    $("title").textContent = "Dmap Compressor v2.3.5";
     $("lblLang").textContent = "Language";
+    const fileLabel = $("fileNameSet")?.previousElementSibling;
+    if (fileLabel && fileLabel.tagName === "LABEL") fileLabel.textContent = t.fileName;
+    if ($("fileNameSet")) $("fileNameSet").placeholder = t.fileNamePH;
 
     $("run").textContent = state.mode === "c" ? t.compress : t.decompress;
     $("copyIn").textContent = t.copyIn;
     $("copyOut").textContent = t.copyOut;
-    $("download").textContent = t.download;
+    $("downloadTxt").textContent = t.downloadTxt;
+    $("downloadZip").textContent = t.downloadZip;
 
     $("input").placeholder = t.inputPH;
     $("output").placeholder = state.mode === "c" ? t.outputPHCompress : t.outputPHDecompress;
@@ -314,15 +483,21 @@ Output: 0
 
   function updateSelectionView() {
     const t = tr();
+    const fileNameSet = $("fileNameSet");
+
     if (!state.files.length) {
       $("sel").textContent = t.noFile;
+      if (fileNameSet && !String(fileNameSet.value || "").trim()) fileNameSet.value = "data";
       return;
     }
     if (state.files.length === 1) {
       $("sel").textContent = state.files[0].name;
+      if (fileNameSet) fileNameSet.value = sanitizeFileName(stripExt(state.files[0].name));
       return;
     }
-    $("sel").textContent = `${t.multi} (${state.files.length})\n` + state.files.map(f => f.name).join("\n");
+    $("sel").textContent = `${t.multi} (${state.files.length})
+` + state.files.map(f => f.name).join("\n");
+    if (fileNameSet) fileNameSet.value = sanitizeFileName(stripExt(state.files[0].name) + "_bundle");
   }
 
   function updateStats() {
@@ -485,16 +660,34 @@ Output: 0
       return new Uint8Array(out);
     }
 
-  function dl(name, text) {
-    const a = document.createElement("a");
-    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 800);
-  }
+    function downloadBlob(blob, name) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      a.href = url;
+      a.download = name;
+      a.style.display = "none";
+
+      document.body.appendChild(a);
+
+      requestAnimationFrame(() => {
+        a.click();
+
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          a.remove();
+        }, 5000);
+      });
+    }
+
+    function dl(name, text) {
+      downloadBlob(
+        new Blob([text], {
+          type:"text/plain;charset=utf-8"
+        }),
+        name
+      );
+    }
 
   async function readFile(file) {
     return new Promise((resolve, reject) => {
@@ -605,18 +798,34 @@ Output: 0
     }
   }
 
-  function downloadCurrent() {
-    if (state.files.length > 1) {
-      const chunks = $("output").value.split("\n\n");
-      for (let i = 0; i < state.files.length; i++) {
-        const name = stripExt(state.files[i].name) + (state.mode === "c" ? "_compressed" : "_decompressed") + ".txt";
-        dl(name, chunks[i] || "");
+  function downloadCurrentTxt() {
+    const base = getDownloadBase();
+    const suffix = state.mode === "c" ? "_compressed" : "_decompressed";
+
+    if (state.files.length > 1 && state.multiOutputs.length > 1) {
+      for (const item of state.multiOutputs) {
+        dl(sanitizeFileName(stripExt(item.name)) + suffix + ".txt", item.out);
       }
       return;
     }
 
-    const base = state.files.length === 1 ? stripExt(state.files[0].name) : "data";
-    dl(base + (state.mode === "c" ? "_compressed" : "_decompressed") + ".txt", $("output").value);
+    dl(base + suffix + ".txt", $("output").value);
+  }
+
+  function downloadCurrentZip() {
+    const suffix = state.mode === "c" ? "_compressed" : "_decompressed";
+
+    if (state.files.length > 1 && state.multiOutputs.length > 1) {
+      const entries = state.multiOutputs.map(item => ({
+        name: sanitizeFileName(stripExt(item.name)) + suffix + ".txt",
+        data: item.out
+      }));
+      downloadBlob(buildZipBlob(entries), getDownloadBase() + ".zip");
+      return;
+    }
+
+    const singleName = (state.files.length === 1 ? sanitizeFileName(stripExt(state.files[0].name)) : getDownloadBase()) + suffix + ".txt";
+    downloadBlob(buildZipBlob([{ name: singleName, data: $("output").value }]), getDownloadBase() + ".zip");
   }
 
   $("lang").addEventListener("change", (e) => setLang(e.target.value));
@@ -636,38 +845,95 @@ Output: 0
   });
   $("theme").addEventListener("change", (e) => setTheme(e.target.value));
 
-  $("file").addEventListener("change", async function () {
-    state.files = [...this.files];
-    state.multiRates = [];
-    state.multiOutputs = [];
-    state.multiInputs = [];
-    state.multiLengths = [];
-    state.statsReady = false;
-    $("input").value = "";
-    $("output").value = "";
-    updateSelectionView();
-    updateStats();
+let addMode = false;
 
-    try {
-      if (state.files.length === 1) {
-        const text = await readFile(state.files[0]);
-        $("input").value = `[${state.files[0].name}]\n` + text;
-        syncModeFromText(text);
-      } else if (state.files.length > 1) {
-        const texts = await Promise.all(state.files.map(readFile));
-        $("input").value = texts.map((t,i)=>`[${state.files[i].name}]\n${t}`).join("\n\n");
-        const modes = texts.map(detectModeFromText);
-        const d = modes.filter(v => v === "d").length;
-        const c = modes.filter(v => v === "c").length;
-        state.mode = d !== c ? (d > c ? "d" : "c") : (modes[0] || state.mode);
-      }
-    } catch (e) {
-      console.warn(e);
+function mergeFiles(oldFiles, newFiles) {
+  const map = new Map();
+
+  for (const f of [...oldFiles, ...newFiles]) {
+    map.set(
+      `${f.name}_${f.size}_${f.lastModified}`,
+      f
+    );
+  }
+
+  return [...map.values()];
+}
+
+async function updateFileView() {
+  state.multiRates = [];
+  state.multiOutputs = [];
+  state.multiInputs = [];
+  state.multiLengths = [];
+  state.statsReady = false;
+
+  $("input").value = "";
+  $("output").value = "";
+
+  updateSelectionView();
+  updateStats();
+
+  try {
+    if (state.files.length === 1) {
+      const text = await readFile(state.files[0]);
+
+      $("input").value =
+        `[${state.files[0].name}]\n` + text;
+
+      syncModeFromText(text);
     }
+    else if (state.files.length > 1) {
+      const texts = await Promise.all(
+        state.files.map(readFile)
+      );
 
-    renderAll();
-    this.value = "";
-  });
+      $("input").value = texts.map(
+        (t,i)=>`[${state.files[i].name}]\n${t}`
+      ).join("\n\n");
+
+      const modes = texts.map(detectModeFromText);
+      const d = modes.filter(v => v === "d").length;
+      const c = modes.filter(v => v === "c").length;
+
+      state.mode =
+        d !== c
+        ? (d > c ? "d" : "c")
+        : (modes[0] || state.mode);
+    }
+  }
+  catch (e) {
+    console.warn(e);
+  }
+
+  renderAll();
+}
+
+$("pickReplace").addEventListener("click", () => {
+  addMode = false;
+  $("file").click();
+});
+
+$("pickAdd").addEventListener("click", () => {
+  addMode = true;
+  $("file").click();
+});
+
+$("file").addEventListener("change", async function () {
+  const picked = [...this.files];
+
+  if (addMode) {
+    state.files = mergeFiles(
+      state.files,
+      picked
+    );
+  }
+  else {
+    state.files = picked;
+  }
+
+  this.value = "";
+  await updateFileView();
+});
 
   $("input").addEventListener("input", () => {
     state.files = [];
@@ -705,10 +971,12 @@ Output: 0
       alert(tr().fail + ": " + (e?.message || String(e)));
     }
   });
-  $("download").addEventListener("click", downloadCurrent);
+  $("downloadTxt").addEventListener("click", downloadCurrentTxt);
+  $("downloadZip").addEventListener("click", downloadCurrentZip);
 
   // Initial state
   setTheme(state.theme);
+  if ($("fileNameSet")) $("fileNameSet").value = "data";
   renderAll();
 })();
 </script>
